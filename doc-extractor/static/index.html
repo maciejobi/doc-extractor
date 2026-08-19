@@ -819,27 +819,54 @@ async function extractOne(file) {
 }
 
 // obsługa wielu plików - przetwarza sekwencyjnie z paskiem postępu
+// ile faktur przetwarzać jednocześnie - zsynchronizowane z liczbą wątków
+// Gunicorn na serwerze (--threads 4). Więcej nie przyspieszy, bo backend
+// i tak obsłuży tylko tyle naraz, a reszta czekałaby w kolejce.
+const CONCURRENCY = 4;
+
 async function handleMany(fileList) {
   const files = Array.from(fileList);
   $("err").classList.remove("on"); $("result").classList.remove("on");
   drop.classList.add("busy"); $("loading").classList.add("on");
 
-  let lastData = null, lastFile = null, failed = 0;
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    const isImage = file.type.startsWith("image/");
-    $("loadingText").textContent = files.length > 1
-      ? `${t("processing")} ${i + 1}/${files.length} — ${file.name}`
-      : (isImage ? t("loading_img") : t("loading_doc"));
-    try {
-      const data = await extractOne(file);
-      batchInvoices.push(data);
-      lastData = data; lastFile = file;
-    } catch (e) {
-      failed++;
-      console.error("Błąd pliku", file.name, e.message);
+  let done = 0, failed = 0, lastData = null, lastFile = null;
+  const total = files.length;
+
+  const updateProgress = () => {
+    $("loadingText").textContent = total > 1
+      ? `${t("processing")} ${done}/${total}`
+      : (files[0].type.startsWith("image/") ? t("loading_img") : t("loading_doc"));
+  };
+  updateProgress();
+
+  // pula robocza: kilka plików przetwarzanych równolegle naraz.
+  // Gdy jeden się kończy, od razu bierzemy następny z kolejki -
+  // dzięki temu zawsze CONCURRENCY żądań jest "w locie".
+  let cursor = 0;
+  async function worker() {
+    while (cursor < files.length) {
+      const idx = cursor++;
+      const file = files[idx];
+      try {
+        const data = await extractOne(file);
+        batchInvoices.push(data);
+        lastData = data; lastFile = file;
+      } catch (e) {
+        failed++;
+        console.error("Błąd pliku", file.name, e.message);
+      }
+      done++;
+      updateProgress();
+      renderBatch();  // panel rośnie na żywo, w miarę spływania wyników
     }
   }
+
+  // uruchom CONCURRENCY równoległych workerów
+  const workers = [];
+  for (let i = 0; i < Math.min(CONCURRENCY, files.length); i++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
 
   $("loading").classList.remove("on"); drop.classList.remove("busy");
 
@@ -850,7 +877,7 @@ async function handleMany(fileList) {
     render(lastData);
   }
   renderBatch();
-  if (failed) showError(t("err_read"), `${failed}/${files.length}`);
+  if (failed) showError(t("err_read"), `${failed}/${total}`);
 }
 
 // render panelu zbiorczego

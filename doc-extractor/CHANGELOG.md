@@ -69,3 +69,10 @@ listy rozwijanej wyboru języka na cztery flagi (PL / GB / DE / FR).
 - Eksport zbiorczy CSV pod Power BI: wszystkie pozycje ze wszystkich faktur
   w jednym pliku. Dane trzymane w pamięci przeglądarki (bez zapisu na serwerze).
 
+### 14. Przyspieszenie przetwarzania wielu faktur (równoległość)
+- Faktury przetwarzane równolegle (do 4 naraz) zamiast jedna po drugiej.
+  Realne przyspieszenie ok. 4x (100 faktur: ~8 min -> ~2 min).
+- Panel zbiorczy wypełnia się na żywo, w miarę spływania wyników.
+- Backend: zwiększona liczba wątków Gunicorn (2 -> 4), dostrojona pod
+  limit pamięci darmowego planu (ekstrakcja LLM to głównie czekanie na sieć).
+

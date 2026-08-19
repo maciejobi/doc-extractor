@@ -13,14 +13,16 @@ COPY . .
 
 EXPOSE 5000
 # Gunicorn w produkcji. Konfiguracja dostrojona pod darmowy plan (512 MB RAM):
-#   -w 1            : 1 worker (2 workery + OCR potrafią przekroczyć pamięć)
-#   --threads 2     : 2 wątki na worker -> obsługa równoległych żądań
-#   --timeout 120   : długi timeout na OCR skanów
+#   -w 1            : 1 worker (2+ workery + OCR potrafią przekroczyć pamięć)
+#   --threads 4     : 4 wątki -> obsługa równoległych żądań. Ekstrakcja przez
+#                     LLM to głównie CZEKANIE na odpowiedź API (nie obciążenie
+#                     RAM/CPU), więc wątki dają realne przyspieszenie batcha
+#                     bez wysycania pamięci. Frontend wysyła max 4 naraz.
+#   --timeout 180   : długi timeout (batch + OCR skanów)
 #   --max-requests  : recykling workera po N żądaniach (czyści wycieki pamięci)
-#   --access-logfile/--error-logfile - : logi do stdout (widoczne w panelu Render)
 # Port ze zmiennej PORT (chmury przydzielają dynamicznie), fallback 5000 lokalnie.
 CMD gunicorn -b 0.0.0.0:${PORT:-5000} \
-    -w 1 --threads 2 --timeout 120 \
-    --max-requests 50 --max-requests-jitter 10 \
+    -w 1 --threads 4 --timeout 180 \
+    --max-requests 80 --max-requests-jitter 15 \
     --access-logfile - --error-logfile - \
     app:app

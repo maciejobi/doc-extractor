@@ -500,17 +500,18 @@ _LEGAL_FORMS = [
 def _split_merged_parties(fields: dict) -> None:
     """
     Zabezpieczenie: jeśli LLM skleił nazwę sprzedawcy z nabywcą w jedno pole
-    (np. "MACIEJ OBRZUT C&F SPÓŁKA AKCYJNA"), próbujemy je rozdzielić.
+    (np. "MACIEJ OBRZUT C&F SPÓŁKA AKCYJNA"), rozdzielamy je.
 
-    Podejście: szukamy formy prawnej firmy (Sp. z o.o., S.A., Spółka Akcyjna...).
-    Jeśli w nazwie sprzedawcy jest forma prawna i PO niej jest jeszcze tekst,
-    albo PRZED nią jest osobna nazwa (druga firma) - rozdzielamy. Rozdzielenie
-    robimy tylko gdy pole nabywcy jest puste (żeby nie psuć poprawnych danych).
+    Wykrywanie sklejenia: w nazwie sprzedawcy jest forma prawna firmy
+    (Sp. z o.o., S.A., Spółka Akcyjna...) ORAZ przed nią jest jeszcze osobna
+    nazwa (np. imię i nazcisko), albo po niej jest druga firma. Rozdzielamy
+    ZAWSZE gdy wykryjemy sklejenie - także gdy nabywca jest już wypełniony
+    (bo LLM potrafi wpisać sklejoną nazwę do sprzedawcy niezależnie od nabywcy).
     """
     seller = (fields.get("seller_name") or fields.get("seller") or "").strip()
     buyer = (fields.get("buyer_name") or fields.get("buyer") or "").strip()
-    if not seller or buyer:
-        return  # rozdzielamy tylko gdy nabywca pusty
+    if not seller:
+        return
 
     low = seller.lower()
     for form in sorted(_LEGAL_FORMS, key=len, reverse=True):
@@ -523,27 +524,35 @@ def _split_merged_parties(fields: dict) -> None:
 
         if tail and len(tail) > 2:
             # forma w środku: pierwsza firma kończy się formą, druga = tail
-            fields["seller_name"] = seller[:end].strip(" .,-")
-            fields["buyer_name"] = tail
-            fields.pop("seller", None); fields.pop("buyer", None)
-            return
+            first_company = seller[:end].strip(" .,-")
+            second_company = tail
         elif head:
-            # forma na końcu: druga firma to (coś + forma). Szukamy granicy -
-            # zwykle druga firma zaczyna się od "krótkiego" członu przed formą.
-            # Heurystyka: jeśli head zawiera >= 3 słowa, ostatnie 1-2 słowa +
-            # forma to druga firma, reszta to pierwsza (sprzedawca).
+            # forma na końcu: druga firma to (człon przed formą + forma).
+            # Zakładamy sprzedawca = pierwsze 1-2 słowa (osoba/krótka nazwa),
+            # druga firma = reszta + forma prawna.
             words = head.split()
-            if len(words) >= 3:
-                # pierwsza firma: pierwsze słowa (imię+nazwisko = 2 słowa)
-                # druga firma: reszta słów + forma prawna (z oryginału)
-                first = " ".join(words[:2])
-                form_original = seller[idx:end]  # forma w oryginalnej pisowni
-                rest_after_form = seller[end:]     # ewentualny ogon
-                second = " ".join(words[2:]) + " " + form_original + rest_after_form
-                fields["seller_name"] = first.strip()
-                fields["buyer_name"] = second.strip()
-                fields.pop("seller", None); fields.pop("buyer", None)
-            return
+            if len(words) < 3:
+                return  # za mało słów, by rozdzielić bezpiecznie
+            first_company = " ".join(words[:2]).strip()
+            # druga firma: pozostałe słowa + forma prawna + ewentualny ogon.
+            # Składamy z pojedynczymi spacjami, by nie skleić "C&F" z "SPÓŁKA".
+            second_parts = words[2:] + [seller[idx:end].strip()]
+            second_company = " ".join(p for p in second_parts if p)
+            trailing = seller[end:].strip()
+            if trailing:
+                second_company += " " + trailing
+        else:
+            return  # forma to cała nazwa - jedna firma, nie ruszaj
+
+        # mamy dwie firmy. Sprzedawca = pierwsza. Druga trafia do nabywcy,
+        # ale tylko jeśli nabywca pusty albo jest DUPLIKATEM sprzedawcy
+        # (LLM czasem wpisuje to samo w oba pola).
+        fields["seller_name"] = first_company
+        fields.pop("seller", None)
+        if not buyer or buyer.lower() in low:
+            fields["buyer_name"] = second_company
+            fields.pop("buyer", None)
+        return
 
 
 def _s(v):
