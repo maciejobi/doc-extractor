@@ -263,7 +263,7 @@ def _parse_invoice_fields(text: str) -> dict[str, Any]:
 
     # Sprzedawca / nabywca - nazwa (PL/EN/DE/FR)
     seller = _find_group(
-        r"(?:sprzedawca|seller|verkäufer|lieferant|vendeur|émetteur)"
+        r"(?:sprzedawca|wystawca|seller|verkäufer|lieferant|vendeur|émetteur)"
         r"[:\s]*\n?\s*([^\n]{3,60})", text)
     if seller:
         fields["seller"] = seller.strip()
