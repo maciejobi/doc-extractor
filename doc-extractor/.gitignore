@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Logi i artefakty lokalne
+*.log
+server.log
+shot_*.png
+ui_*.png
+run_server.py
+shot*.py
+make_sample.py
+make_cargo.py
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Sekrety
+.env
+*.key

@@ -1,0 +1,11 @@
+# Konfiguracja wdrożenia dla Render (https://render.com)
+# Dzięki temu plikowi Render wykrywa projekt automatycznie (Blueprint):
+# New + → Blueprint → wskaż to repo → Apply.
+services:
+  - type: web
+    name: doc-extractor
+    runtime: docker          # używa Dockerfile (Tesseract w zestawie)
+    plan: free               # darmowy plan (usypia po 15 min bezczynności)
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true         # deploy przy każdym push na główną gałąź

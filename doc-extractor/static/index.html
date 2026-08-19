@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>InvoiceFlow — invoice data extractor</title>
+<style>
+  /* ---------- System projektowy -----------------------------------------
+     Brief: korporacyjny, poważny, biuro księgowe, granat + błękit.
+     Kierunek: gęsta precyzja narzędzia księgowego. Granatowy pasek jak
+     w aplikacji desktopowej, dane w edytowalnych polach ze wskaźnikiem
+     pewności odczytu. Akcent błękitny wyłącznie na akcjach.
+     Sygnatura: kropka pewności przy każdym polu + edycja inline.        */
+  :root {
+    --navy-900: #12203c;
+    --navy-800: #1b2a4a;
+    --navy-700: #24365c;
+    --blue-500: #2d5b9a;
+    --blue-400: #3d72bd;
+    --blue-100: #e7eefa;
+    --paper:    #f4f6fa;
+    --card:     #ffffff;
+    --line:     #d8e0ee;
+    --line-soft:#e8edf6;
+    --ink:      #1a2338;
+    --ink-soft: #5a6782;
+    --ink-mute: #8b96ac;
+    --ok:       #1f8a5b;
+    --ok-bg:    #e6f4ec;
+    --warn:     #c98a1a;
+    --warn-bg:  #fbf1dc;
+    --miss:     #b03b4a;
+    --miss-bg:  #fbe9eb;
+    --sans: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+    --mono: "SFMono-Regular", "JetBrains Mono", Consolas, ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); font-size: 14px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Top bar (granatowy pasek aplikacji) ---- */
+  .topbar {
+    background: var(--navy-800);
+    color: #fff;
+    box-shadow: 0 1px 0 rgba(0,0,0,.15);
+    position: sticky; top: 0; z-index: 20;
+  }
+  /* zawartość paska ograniczona do tej samej szerokości co treść strony */
+  .topbar-inner {
+    max-width: 1080px; margin: 0 auto; padding: 0 24px;
+    height: 56px; display: flex; align-items: center; gap: 14px;
+  }
+  .logo {
+    width: 30px; height: 30px; border-radius: 6px;
+    background: linear-gradient(135deg, var(--blue-400), var(--blue-500));
+    display: grid; place-items: center; font-weight: 700; font-size: 15px;
+    color: #fff; letter-spacing: -.02em; flex-shrink: 0;
+  }
+  .topbar h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+  .topbar .sub { font-size: 12px; color: #9fb0d0; font-weight: 400; }
+  .engine-badge {
+    margin-left: auto; font-size: 11px; font-family: var(--mono);
+    padding: 4px 10px; border-radius: 20px; background: rgba(255,255,255,.1);
+    color: #cdd8ee; display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  }
+  .engine-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-mute); }
+  .engine-badge.llm .dot { background: #4ade80; }
+  .engine-badge.rules .dot { background: #fbbf24; }
+
+  /* wybór języka - flagi zamiast listy rozwijanej */
+  .lang-flags { display: flex; gap: 4px; margin-left: 12px; flex-shrink: 0; }
+  .flag-btn {
+    padding: 3px; background: transparent; border: 2px solid transparent;
+    border-radius: 6px; cursor: pointer; line-height: 0;
+    opacity: .5; transition: opacity .15s, border-color .15s, transform .1s;
+  }
+  .flag-btn:hover { opacity: 1; transform: translateY(-1px); }
+  .flag-btn.active { opacity: 1; border-color: var(--blue-400); }
+  .flag-btn svg { border-radius: 2px; display: block; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  /* ---- Dropzone ---- */
+  .drop {
+    display: block; background: var(--card);
+    border: 1.5px dashed var(--line); border-radius: 12px;
+    padding: 40px 24px; text-align: center; cursor: pointer;
+    transition: all .15s;
+  }
+  .drop:hover { border-color: var(--blue-400); background: #fbfcfe; }
+  .drop.drag { border-color: var(--blue-500); background: var(--blue-100); border-style: solid; }
+  .drop.busy { pointer-events: none; opacity: .65; }
+  .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+  .source-btns {
+    display: flex; gap: 10px; justify-content: center; margin-top: 20px; flex-wrap: wrap;
+  }
+  .src-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--sans); font-size: 14px; font-weight: 600;
+    padding: 11px 18px; border-radius: 10px; cursor: pointer;
+    background: var(--card); color: var(--navy-700); border: 1.5px solid var(--line);
+    transition: all .12s;
+  }
+  .src-btn:hover { border-color: var(--blue-400); background: var(--blue-100); }
+  .src-btn:active { transform: scale(.97); }
+  .src-btn .src-ic { font-size: 17px; }
+  #btnCamera { background: var(--blue-500); color: #fff; border-color: var(--blue-500); }
+  #btnCamera:hover { background: var(--blue-400); border-color: var(--blue-400); }
+  .drop .ic {
+    width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 12px;
+    background: var(--navy-800); color: #fff;
+    display: grid; place-items: center; font-size: 22px;
+  }
+  .drop h2 { margin: 0 0 5px; font-size: 17px; font-weight: 600; color: var(--ink); }
+  .drop p { margin: 0; font-size: 13px; color: var(--ink-soft); }
+
+  /* loading */
+  .loading { display: none; align-items: center; gap: 12px; justify-content: center;
+    padding: 40px; color: var(--ink-soft); font-size: 13px; }
+  .loading.on { display: flex; }
+  .spinner {
+    width: 20px; height: 20px; border: 2.5px solid var(--line);
+    border-top-color: var(--blue-500); border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---- Panel wyniku ---- */
+  .result { display: none; }
+  .result.on { display: block; animation: rise .25s ease; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  .result-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-bottom: 18px; flex-wrap: wrap;
+  }
+  .result-head .file {
+    font-family: var(--mono); font-size: 13px; color: var(--ink-soft);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .result-head .file b { color: var(--ink); font-weight: 600; }
+  .meta-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .tag {
+    font-size: 11px; padding: 4px 10px; border-radius: 6px;
+    background: var(--card); border: 1px solid var(--line); color: var(--ink-soft);
+    font-family: var(--mono);
+  }
+  .tag b { color: var(--ink); }
+  .tag.type { background: var(--navy-800); color: #fff; border-color: var(--navy-800); font-weight: 600; }
+
+  .actions { display: flex; gap: 10px; }
+  .btn {
+    font-family: var(--sans); font-size: 13px; font-weight: 600;
+    padding: 9px 16px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+    display: inline-flex; align-items: center; gap: 7px; transition: all .12s;
+  }
+  .btn-primary { background: var(--blue-500); color: #fff; }
+  .btn-primary:hover { background: var(--blue-400); }
+  .btn-ghost { background: var(--card); color: var(--ink); border-color: var(--line); }
+  .btn-ghost:hover { border-color: var(--ink-soft); }
+  .btn-excel { background: var(--ok); color: #fff; }
+  .btn-excel:hover { background: #1a7a4f; }
+  .btn-powerbi { background: #d4a017; color: #fff; }
+  .btn-powerbi:hover { background: #b8890f; }
+
+  /* panel zbiorczy wielu faktur */
+  .batch-panel {
+    background: #fff; border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 20px; margin-bottom: 22px; box-shadow: var(--shadow);
+  }
+  .batch-head {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px; margin-bottom: 14px;
+  }
+  .batch-title { font-size: 16px; font-weight: 700; color: var(--ink); display: flex; align-items: center; gap: 10px; }
+  .batch-count {
+    background: var(--blue-500); color: #fff; border-radius: 20px;
+    padding: 2px 11px; font-size: 13px; font-weight: 600;
+  }
+  .batch-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .batch-actions .btn { padding: 8px 14px; font-size: 13px; }
+  .batch-totals {
+    display: flex; gap: 20px; flex-wrap: wrap; padding: 12px 14px;
+    background: var(--blue-50); border-radius: 10px; margin-bottom: 14px;
+  }
+  .batch-totals .bt {
+    font-size: 13px; color: var(--ink-soft);
+  }
+  .batch-totals .bt b { display: block; font-size: 16px; color: var(--navy-800); font-weight: 700; }
+  .batch-list { display: flex; flex-direction: column; gap: 8px; }
+  .batch-row {
+    display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
+  }
+  .batch-row .bnum { font-weight: 600; color: var(--navy-800); min-width: 90px; }
+  .batch-row .bseller { flex: 1; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .batch-row .bgross { font-weight: 600; color: var(--ink); }
+  .batch-row .bdel {
+    background: none; border: none; color: var(--miss); cursor: pointer;
+    font-size: 16px; padding: 2px 6px; line-height: 1;
+  }
+  .batch-row .bdel:hover { color: #b91c1c; }
+  .btn:disabled { opacity: .6; cursor: default; }
+
+  /* ---- Karty sekcji ---- */
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; margin-bottom: 16px; overflow: hidden;
+  }
+  .card-head {
+    padding: 13px 18px; border-bottom: 1px solid var(--line-soft);
+    display: flex; align-items: center; gap: 10px;
+    font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--navy-700);
+  }
+  .card-head .count { font-family: var(--mono); font-weight: 400; color: var(--ink-mute); text-transform: none; }
+  .card-body { padding: 8px 18px 16px; }
+
+  /* ---- Pola edytowalne ---- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 4px 20px; }
+  .field { padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
+  .field-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--ink-mute); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;
+  }
+  .conf-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .conf-dot.high { background: var(--ok); }
+  .conf-dot.mid  { background: var(--warn); }
+  .conf-dot.low  { background: var(--miss); }
+  .field-input {
+    width: 100%; border: 1px solid transparent; background: transparent;
+    font-family: var(--mono); font-size: 14px; color: var(--ink);
+    padding: 6px 8px; border-radius: 6px; transition: all .12s;
+  }
+  .field-input:hover { background: var(--paper); }
+  .field-input:focus {
+    outline: none; background: #fff; border-color: var(--blue-400);
+    box-shadow: 0 0 0 3px rgba(45,91,154,.12);
+  }
+  .field-input.edited { border-color: var(--ok); background: var(--ok-bg); }
+
+  /* ---- Tabela pozycji ---- */
+  .items { width: 100%; border-collapse: collapse; }
+  .items th {
+    text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--ink-mute); padding: 8px 10px; border-bottom: 1.5px solid var(--line);
+    font-weight: 600;
+  }
+  .items th.r, .items td.r { text-align: right; }
+  .items td { padding: 2px 6px; border-bottom: 1px solid var(--line-soft); }
+  .items td input {
+    width: 100%; border: 1px solid transparent; background: transparent;
+    font-family: var(--mono); font-size: 13px; color: var(--ink); padding: 6px 8px; border-radius: 5px;
+  }
+  .items td input:hover { background: var(--paper); }
+  .items td input:focus { outline: none; background: #fff; border-color: var(--blue-400); box-shadow: 0 0 0 2px rgba(45,91,154,.1); }
+  .items td.r input { text-align: right; }
+  .items tr:hover td { background: rgba(231,238,250,.3); }
+
+  .hint-edit {
+    font-size: 12px; color: var(--ink-soft); margin: 2px 0 14px;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .hint-edit .k { display: inline-flex; gap: 5px; align-items: center; }
+  .hint-edit .conf-dot { width: 8px; height: 8px; }
+
+  /* ---- Surowe dane ---- */
+  details { border: 1px solid var(--line); border-radius: 10px; background: var(--card); margin-top: 4px; }
+  summary { padding: 12px 16px; cursor: pointer; font-size: 12px; font-weight: 600;
+    color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; user-select: none; }
+  details[open] summary { border-bottom: 1px solid var(--line-soft); }
+  pre { margin: 0; padding: 14px 16px; font-family: var(--mono); font-size: 12px;
+    line-height: 1.6; color: var(--ink-soft); white-space: pre-wrap; max-height: 300px; overflow: auto; }
+
+  .err {
+    display: none; background: var(--miss-bg); border: 1px solid #eab8be;
+    color: var(--miss); border-radius: 10px; padding: 14px 16px; font-size: 13px; margin-top: 16px;
+  }
+  .err.on { display: block; }
+  .err b { display: block; margin-bottom: 3px; }
+
+  .privacy {
+    margin-top: 28px; padding: 14px 16px; background: var(--card);
+    border: 1px solid var(--line-soft); border-radius: 10px;
+    font-size: 12px; color: var(--ink-soft); display: flex; gap: 10px; align-items: flex-start;
+  }
+  .privacy .pic { color: var(--blue-500); flex-shrink: 0; font-size: 15px; }
+
+  /* przycisk przykładu */
+  .try-sample {
+    text-align: center; margin-top: 14px; font-size: 13px; color: var(--ink-soft);
+  }
+  .try-sample button {
+    background: none; border: none; color: var(--blue-500); font-weight: 600;
+    font-size: 13px; cursor: pointer; font-family: var(--sans); padding: 4px 6px;
+  }
+  .try-sample button:hover { text-decoration: underline; }
+
+  /* layout dwukolumnowy: podgląd | dane */
+  .split { display: grid; grid-template-columns: minmax(0, 42%) minmax(0, 1fr); gap: 18px; align-items: start; }
+  .preview-col { position: sticky; top: 72px; }
+  .preview-card { margin-bottom: 0; }
+  .preview-holder {
+    background: #eef1f6; max-height: 78vh; overflow: auto;
+    display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px;
+  }
+  .preview-open {
+    font-size: 12px; color: var(--blue-500); text-decoration: none; font-weight: 600;
+    padding: 4px; align-self: center;
+  }
+  .preview-open:hover { text-decoration: underline; }
+  .preview-holder embed, .preview-holder img {
+    width: 100%; height: auto; min-height: 480px; border-radius: 6px;
+    background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.1);
+  }
+  .preview-holder img { object-fit: contain; }
+
+  /* baner walidacji */
+  .valid-banner {
+    background: var(--warn-bg); border: 1px solid #e6cf94; border-radius: 10px;
+    padding: 11px 14px; margin-bottom: 14px; font-size: 13px; color: #8a5d10;
+  }
+  .valid-banner b { display: block; margin-bottom: 4px; }
+  .valid-banner ul { margin: 0; padding-left: 18px; }
+
+  /* pole z błędem walidacji */
+  .field.invalid .field-input { border-color: var(--miss); background: var(--miss-bg); }
+  .field-warn { font-size: 11px; color: var(--miss); margin-top: 4px; display: none; }
+  .field.invalid .field-warn { display: block; }
+
+  @media (max-width: 600px) {
+    .wrap { padding: 18px 14px 60px; }
+    .grid { grid-template-columns: 1fr; }
+    .split { grid-template-columns: 1fr; }        /* podgląd nad danymi */
+    .preview-col { position: static; }
+    .preview-holder { max-height: 50vh; }
+    .result-head { flex-direction: column; align-items: stretch; }
+    .actions { flex-wrap: wrap; }
+    .actions .btn { flex: 1; justify-content: center; min-width: 140px; }
+
+    /* topbar zwięźlejszy */
+    .topbar-inner { padding: 0 14px; height: 52px; gap: 8px; }
+    .topbar .sub { display: none; }              /* podtytuł zabiera miejsce */
+    .lang-flags { margin-left: 8px; gap: 2px; }
+    .flag-btn svg { width: 22px; height: 15px; }
+    .engine-badge { padding: 4px 8px; font-size: 10px; }
+
+    /* strefa wgrywania: przyciski pełnej szerokości = łatwo trafić palcem */
+    .drop { padding: 28px 16px; }
+    .source-btns { flex-direction: column; gap: 8px; }
+    .src-btn { width: 100%; justify-content: center; padding: 14px; font-size: 15px; }
+    #btnCamera { order: -1; }                     /* aparat na górze */
+
+    /* pola formularza większe pod dotyk */
+    .field-input { font-size: 16px; padding: 10px 10px; }   /* 16px = brak zoomu iOS */
+    .field { padding: 11px 0; }
+
+    /* tabela pozycji: pozioma przewijalność zamiast ściskania */
+    .card-body { overflow-x: auto; }
+    .items { min-width: 460px; }
+    .items td input { font-size: 15px; }
+
+    .hint-edit { font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="logo">FX</div>
+    <div class="brand-text">
+      <h1>InvoiceFlow</h1>
+      <div class="sub">odczyt danych z PDF · edycja · eksport do Excela</div>
+    </div>
+    <div class="engine-badge" id="engineBadge"><span class="dot"></span><span id="engineText" data-i18n="ready">gotowy</span></div>
+    <div class="lang-flags" id="langFlags" role="group" aria-label="Język / Language">
+      <button type="button" class="flag-btn" data-lang="pl" title="Polski" aria-label="Polski">
+        <svg viewBox="0 0 20 14" width="26" height="18"><rect width="20" height="7" y="0" fill="#fff"/><rect width="20" height="7" y="7" fill="#dc143c"/><rect width="20" height="14" fill="none" stroke="#00000018"/></svg>
+      </button>
+      <button type="button" class="flag-btn" data-lang="en" title="English" aria-label="English">
+        <svg viewBox="0 0 20 14" width="26" height="18"><rect width="20" height="14" fill="#012169"/><path d="M0,0 L20,14 M20,0 L0,14" stroke="#fff" stroke-width="2.8"/><path d="M0,0 L20,14 M20,0 L0,14" stroke="#c8102e" stroke-width="1.4"/><path d="M10,0 V14 M0,7 H20" stroke="#fff" stroke-width="4.5"/><path d="M10,0 V14 M0,7 H20" stroke="#c8102e" stroke-width="2.7"/></svg>
+      </button>
+      <button type="button" class="flag-btn" data-lang="de" title="Deutsch" aria-label="Deutsch">
+        <svg viewBox="0 0 20 14" width="26" height="18"><rect width="20" height="4.67" y="0" fill="#000"/><rect width="20" height="4.67" y="4.67" fill="#dd0000"/><rect width="20" height="4.66" y="9.34" fill="#ffce00"/></svg>
+      </button>
+      <button type="button" class="flag-btn" data-lang="fr" title="Français" aria-label="Français">
+        <svg viewBox="0 0 20 14" width="26" height="18"><rect width="6.67" height="14" x="0" fill="#002395"/><rect width="6.67" height="14" x="6.67" fill="#fff"/><rect width="6.66" height="14" x="13.34" fill="#ed2939"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="drop" id="drop">
+    <input type="file" id="file" accept="application/pdf,image/*" multiple />
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" />
+    <input type="file" id="galleryInput" accept="image/*" multiple />
+    <div class="ic">📄</div>
+    <h2 data-i18n="drop_title">Wgraj lub zeskanuj fakturę</h2>
+    <p data-i18n="drop_sub">PDF, zdjęcie z galerii lub skan aparatem · do 15 MB</p>
+    <div class="source-btns">
+      <button type="button" class="src-btn" id="btnCamera">
+        <span class="src-ic">📷</span> <span data-i18n="btn_camera">Zrób zdjęcie</span>
+      </button>
+      <button type="button" class="src-btn" id="btnGallery">
+        <span class="src-ic">🖼️</span> <span data-i18n="btn_gallery">Z galerii</span>
+      </button>
+      <button type="button" class="src-btn" id="btnFile">
+        <span class="src-ic">📄</span> <span data-i18n="btn_file">Plik PDF</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="try-sample">
+    <span data-i18n="sample_q">Nie masz faktury pod ręką?</span>
+    <button type="button" id="btnSample" data-i18n="sample_btn">Wypróbuj na przykładzie →</button>
+  </div>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <span id="loadingText">Odczytuję dokument…</span>
+  </div>
+
+  <div class="err" id="err"></div>
+
+  <div class="batch-panel" id="batchPanel" style="display:none">
+    <div class="batch-head">
+      <div class="batch-title">
+        <span data-i18n="batch_collected">Zebrane faktury</span>
+        <span class="batch-count" id="batchCount">0</span>
+      </div>
+      <div class="batch-actions">
+        <button class="btn btn-excel" id="batchExcelBtn" data-i18n="batch_excel">⬇ Zbiorczy Excel</button>
+        <button class="btn btn-powerbi" id="batchPowerbiBtn" data-i18n="batch_powerbi">⬇ Zbiorczy Power BI</button>
+        <button class="btn btn-ghost" id="batchClearBtn" data-i18n="batch_clear">Wyczyść listę</button>
+      </div>
+    </div>
+    <div class="batch-totals" id="batchTotals"></div>
+    <div class="batch-list" id="batchList"></div>
+  </div>
+
+  <div class="result" id="result">
+    <div class="result-head">
+      <div class="file">📄 <b id="fileName">—</b></div>
+      <div class="meta-row" id="metaRow"></div>
+    </div>
+
+    <div class="actions" style="margin-bottom:18px">
+      <button class="btn btn-excel" id="exportBtn" data-i18n="btn_export">⬇ Eksportuj do Excela</button>
+      <button class="btn btn-powerbi" id="powerbiBtn" data-i18n="btn_powerbi">⬇ Dane pod Power BI</button>
+      <button class="btn btn-ghost" id="jsonBtn" data-i18n="btn_json">Pobierz JSON</button>
+      <button class="btn btn-ghost" id="resetBtn" data-i18n="btn_reset">Nowy dokument</button>
+    </div>
+
+    <div class="split">
+      <div class="preview-col" id="previewCol">
+        <div class="card preview-card">
+          <div class="card-head" data-i18n="original">Oryginał</div>
+          <div class="preview-holder" id="previewHolder"></div>
+        </div>
+      </div>
+
+      <div class="data-col">
+        <div class="hint-edit">
+          <span data-i18n="hint_edit">Kliknij w pole, aby poprawić odczyt.</span>
+          <span class="k"><span class="conf-dot high"></span><span data-i18n="conf_high">pewne</span></span>
+          <span class="k"><span class="conf-dot mid"></span><span data-i18n="conf_mid">sprawdź</span></span>
+          <span class="k"><span class="conf-dot low"></span><span data-i18n="conf_low">brak</span></span>
+        </div>
+
+        <div id="validationBanner" class="valid-banner" style="display:none"></div>
+
+        <div class="card">
+          <div class="card-head" data-i18n="invoice_data">Dane faktury</div>
+          <div class="card-body"><div class="grid" id="fields"></div></div>
+        </div>
+
+        <div class="card" id="itemsCard" style="display:none">
+          <div class="card-head"><span data-i18n="items">Pozycje</span> <span class="count" id="itemsCount"></span></div>
+          <div class="card-body" style="padding-top:12px">
+            <table class="items">
+              <thead><tr>
+                <th data-i18n="col_desc">Opis</th><th class="r" data-i18n="col_qty">Ilość</th><th class="r" data-i18n="col_price">Cena jedn.</th><th class="r" data-i18n="col_total">Wartość</th>
+              </tr></thead>
+              <tbody id="itemsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <details>
+          <summary data-i18n="raw_text">Rozpoznany tekst źródłowy</summary>
+          <pre id="rawText"></pre>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <div class="privacy">
+    <span class="pic">🔒</span>
+    <div data-i18n="privacy">Pliki nie są nigdzie zapisywane. Dokument jest przetwarzany w pamięci
+    i usuwany zaraz po odczycie — na serwerze nie pozostaje żadna kopia faktury.</div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// ---- System tłumaczeń interfejsu (PL/EN/DE/FR) ----
+const I18N = {
+  pl: {
+    subtitle: "odczyt danych z PDF · edycja · eksport do Excela",
+    drop_title: "Wgraj lub zeskanuj fakturę",
+    drop_sub: "PDF, zdjęcie z galerii lub skan aparatem · do 15 MB",
+    btn_camera: "Zrób zdjęcie", btn_gallery: "Z galerii", btn_file: "Plik PDF",
+    sample_q: "Nie masz faktury pod ręką?", sample_btn: "Wypróbuj na przykładzie →",
+    loading_doc: "Odczytuję dokument…", loading_img: "Odczytuję zdjęcie…",
+    loading_sample: "Ładuję przykład…",
+    exporting: "Generuję…", processing: "Przetwarzam", batch_collected: "Zebrane faktury", batch_excel: "⬇ Zbiorczy Excel", batch_powerbi: "⬇ Zbiorczy Power BI", batch_clear: "Wyczyść listę", sum_net: "Netto: ", sum_vat: "VAT: ", sum_gross: "Brutto: ", btn_export: "⬇ Eksportuj do Excela", btn_powerbi: "⬇ Dane pod Power BI", btn_json: "Pobierz JSON", btn_reset: "Nowy dokument",
+    original: "Oryginał", hint_edit: "Kliknij w pole, aby poprawić odczyt.",
+    conf_high: "pewne", conf_mid: "sprawdź", conf_low: "brak",
+    invoice_data: "Dane faktury", items: "Pozycje",
+    col_desc: "Opis", col_qty: "Ilość", col_price: "Cena jedn.", col_total: "Wartość",
+    raw_text: "Rozpoznany tekst źródłowy",
+    privacy: "Pliki nie są nigdzie zapisywane. Dokument jest przetwarzany w pamięci i usuwany zaraz po odczycie — na serwerze nie pozostaje żadna kopia faktury.",
+    engine_llm: "silnik: LLM (Claude)", engine_rules: "silnik: reguły", ready: "gotowy",
+    tag_type: {invoice: "faktura", form: "formularz", generic: "dokument"},
+    tag_read: "odczyt", tag_pages: "stron", tag_conf: "pewność",
+    open_pdf: "otwórz PDF w nowej karcie ↗",
+    err_read: "Nie udało się odczytać dokumentu", err_sample: "Nie udało się wczytać przykładu",
+    err_export: "Nie udało się wyeksportować",
+    val_title_1: "Wykryto", val_title_problem: "problem do sprawdzenia", val_title_problems: "problemy do sprawdzenia",
+    items_one: "pozycja", items_many: "pozycje",
+    val: {nip_checksum: "Niepoprawna suma kontrolna NIP", amounts_mismatch: "Kwoty się nie sumują (netto + VAT ≠ brutto)", net_gt_gross: "Netto większe niż brutto", due_before_issue: "Termin płatności przed datą wystawienia", items_sum_mismatch: "Suma pozycji różni się od kwoty brutto"},
+  },
+  en: {
+    subtitle: "read data from PDF · edit · export to Excel",
+    drop_title: "Upload or scan an invoice",
+    drop_sub: "PDF, photo from gallery or camera scan · up to 15 MB",
+    btn_camera: "Take a photo", btn_gallery: "From gallery", btn_file: "PDF file",
+    sample_q: "No invoice at hand?", sample_btn: "Try a sample →",
+    loading_doc: "Reading document…", loading_img: "Reading photo…",
+    loading_sample: "Loading sample…",
+    exporting: "Generating…", processing: "Processing", batch_collected: "Collected invoices", batch_excel: "⬇ Batch Excel", batch_powerbi: "⬇ Batch Power BI", batch_clear: "Clear list", sum_net: "Net: ", sum_vat: "VAT: ", sum_gross: "Gross: ", btn_export: "⬇ Export to Excel", btn_powerbi: "⬇ Data for Power BI", btn_json: "Download JSON", btn_reset: "New document",
+    original: "Original", hint_edit: "Click a field to correct the reading.",
+    conf_high: "certain", conf_mid: "verify", conf_low: "missing",
+    invoice_data: "Invoice data", items: "Line items",
+    col_desc: "Description", col_qty: "Qty", col_price: "Unit price", col_total: "Amount",
+    raw_text: "Recognized source text",
+    privacy: "Files are never stored. The document is processed in memory and discarded right after reading — no copy of the invoice stays on the server.",
+    engine_llm: "engine: LLM (Claude)", engine_rules: "engine: rules", ready: "ready",
+    tag_type: {invoice: "invoice", form: "form", generic: "document"},
+    tag_read: "read", tag_pages: "pages", tag_conf: "confidence",
+    open_pdf: "open PDF in new tab ↗",
+    err_read: "Could not read the document", err_sample: "Could not load the sample",
+    err_export: "Export failed",
+    val_title_1: "Found", val_title_problem: "issue to check", val_title_problems: "issues to check",
+    items_one: "item", items_many: "items",
+    val: {nip_checksum: "Invalid tax ID checksum", amounts_mismatch: "Amounts don't add up (net + VAT ≠ gross)", net_gt_gross: "Net greater than gross", due_before_issue: "Due date before issue date", items_sum_mismatch: "Line items sum differs from gross amount"},
+  },
+  de: {
+    subtitle: "Daten aus PDF lesen · bearbeiten · Excel-Export",
+    drop_title: "Rechnung hochladen oder scannen",
+    drop_sub: "PDF, Foto aus Galerie oder Kamera-Scan · bis 15 MB",
+    btn_camera: "Foto aufnehmen", btn_gallery: "Aus Galerie", btn_file: "PDF-Datei",
+    sample_q: "Keine Rechnung zur Hand?", sample_btn: "Beispiel ausprobieren →",
+    loading_doc: "Dokument wird gelesen…", loading_img: "Foto wird gelesen…",
+    loading_sample: "Beispiel wird geladen…",
+    exporting: "Wird erstellt…", processing: "Verarbeite", batch_collected: "Gesammelte Rechnungen", batch_excel: "⬇ Sammel-Excel", batch_powerbi: "⬇ Sammel-Power BI", batch_clear: "Liste leeren", sum_net: "Netto: ", sum_vat: "MwSt: ", sum_gross: "Brutto: ", btn_export: "⬇ Nach Excel exportieren", btn_powerbi: "⬇ Daten für Power BI", btn_json: "JSON herunterladen", btn_reset: "Neues Dokument",
+    original: "Original", hint_edit: "Feld anklicken, um die Erkennung zu korrigieren.",
+    conf_high: "sicher", conf_mid: "prüfen", conf_low: "fehlt",
+    invoice_data: "Rechnungsdaten", items: "Positionen",
+    col_desc: "Beschreibung", col_qty: "Menge", col_price: "Einzelpreis", col_total: "Betrag",
+    raw_text: "Erkannter Quelltext",
+    privacy: "Dateien werden nicht gespeichert. Das Dokument wird im Speicher verarbeitet und direkt nach dem Lesen verworfen — auf dem Server bleibt keine Kopie der Rechnung.",
+    engine_llm: "Engine: LLM (Claude)", engine_rules: "Engine: Regeln", ready: "bereit",
+    tag_type: {invoice: "Rechnung", form: "Formular", generic: "Dokument"},
+    tag_read: "Erkennung", tag_pages: "Seiten", tag_conf: "Sicherheit",
+    open_pdf: "PDF in neuem Tab öffnen ↗",
+    err_read: "Dokument konnte nicht gelesen werden", err_sample: "Beispiel konnte nicht geladen werden",
+    err_export: "Export fehlgeschlagen",
+    val_title_1: "Gefunden:", val_title_problem: "zu prüfendes Problem", val_title_problems: "zu prüfende Probleme",
+    items_one: "Position", items_many: "Positionen",
+    val: {nip_checksum: "Ungültige USt-IdNr.-Prüfsumme", amounts_mismatch: "Beträge stimmen nicht (Netto + MwSt ≠ Brutto)", net_gt_gross: "Netto größer als Brutto", due_before_issue: "Fälligkeitsdatum vor Rechnungsdatum", items_sum_mismatch: "Summe der Positionen weicht vom Bruttobetrag ab"},
+  },
+  fr: {
+    subtitle: "lecture des données PDF · édition · export Excel",
+    drop_title: "Importer ou scanner une facture",
+    drop_sub: "PDF, photo de la galerie ou scan caméra · jusqu'à 15 Mo",
+    btn_camera: "Prendre une photo", btn_gallery: "Depuis la galerie", btn_file: "Fichier PDF",
+    sample_q: "Pas de facture sous la main ?", sample_btn: "Essayer un exemple →",
+    loading_doc: "Lecture du document…", loading_img: "Lecture de la photo…",
+    loading_sample: "Chargement de l'exemple…",
+    exporting: "Génération…", processing: "Traitement", batch_collected: "Factures collectées", batch_excel: "⬇ Excel groupé", batch_powerbi: "⬇ Power BI groupé", batch_clear: "Vider la liste", sum_net: "HT : ", sum_vat: "TVA : ", sum_gross: "TTC : ", btn_export: "⬇ Exporter vers Excel", btn_powerbi: "⬇ Données pour Power BI", btn_json: "Télécharger JSON", btn_reset: "Nouveau document",
+    original: "Original", hint_edit: "Cliquez sur un champ pour corriger la lecture.",
+    conf_high: "sûr", conf_mid: "vérifier", conf_low: "manquant",
+    invoice_data: "Données de la facture", items: "Lignes",
+    col_desc: "Description", col_qty: "Qté", col_price: "Prix unit.", col_total: "Montant",
+    raw_text: "Texte source reconnu",
+    privacy: "Les fichiers ne sont jamais enregistrés. Le document est traité en mémoire puis supprimé aussitôt après lecture — aucune copie de la facture ne reste sur le serveur.",
+    engine_llm: "moteur : LLM (Claude)", engine_rules: "moteur : règles", ready: "prêt",
+    tag_type: {invoice: "facture", form: "formulaire", generic: "document"},
+    tag_read: "lecture", tag_pages: "pages", tag_conf: "confiance",
+    open_pdf: "ouvrir le PDF dans un nouvel onglet ↗",
+    err_read: "Impossible de lire le document", err_sample: "Impossible de charger l'exemple",
+    err_export: "Échec de l'export",
+    val_title_1: "Trouvé :", val_title_problem: "problème à vérifier", val_title_problems: "problèmes à vérifier",
+    items_one: "ligne", items_many: "lignes",
+    val: {nip_checksum: "Somme de contrôle N° TVA invalide", amounts_mismatch: "Les montants ne correspondent pas (HT + TVA ≠ TTC)", net_gt_gross: "HT supérieur au TTC", due_before_issue: "Échéance avant la date d'émission", items_sum_mismatch: "La somme des lignes diffère du montant TTC"},
+  },
+};
+
+const FIELD_LABELS_I18N = {
+  pl: {
+    invoice_number: "Numer faktury", issue_date: "Data wystawienia", service_date: "Data wykonania",
+    due_date: "Termin płatności", seller_name: "Sprzedawca", seller: "Sprzedawca", seller_nip: "NIP sprzedawcy",
+    seller_address: "Adres sprzedawcy", buyer_name: "Nabywca", buyer: "Nabywca", buyer_nip: "NIP nabywcy",
+    buyer_address: "Adres nabywcy", net_amount: "Suma netto", tax_amount: "Suma VAT", total_amount: "Kwota brutto",
+    currency: "Waluta", payment_method: "Metoda płatności", bank_account: "Numer konta", bank_bic: "BIC",
+    reference_numbers: "Numery referencyjne", email: "E-mail", vat_id: "NIP UE",
+  },
+  en: {
+    invoice_number: "Invoice number", issue_date: "Issue date", service_date: "Service date",
+    due_date: "Due date", seller_name: "Seller", seller: "Seller", seller_nip: "Seller tax ID",
+    seller_address: "Seller address", buyer_name: "Buyer", buyer: "Buyer", buyer_nip: "Buyer tax ID",
+    buyer_address: "Buyer address", net_amount: "Net amount", tax_amount: "VAT amount", total_amount: "Gross amount",
+    currency: "Currency", payment_method: "Payment method", bank_account: "Bank account", bank_bic: "BIC",
+    reference_numbers: "Reference numbers", email: "E-mail", vat_id: "EU VAT ID",
+  },
+  de: {
+    invoice_number: "Rechnungsnummer", issue_date: "Rechnungsdatum", service_date: "Leistungsdatum",
+    due_date: "Fälligkeitsdatum", seller_name: "Verkäufer", seller: "Verkäufer", seller_nip: "USt-IdNr. Verkäufer",
+    seller_address: "Adresse Verkäufer", buyer_name: "Käufer", buyer: "Käufer", buyer_nip: "USt-IdNr. Käufer",
+    buyer_address: "Adresse Käufer", net_amount: "Nettobetrag", tax_amount: "MwSt-Betrag", total_amount: "Bruttobetrag",
+    currency: "Währung", payment_method: "Zahlungsart", bank_account: "Bankkonto", bank_bic: "BIC",
+    reference_numbers: "Referenznummern", email: "E-Mail", vat_id: "USt-IdNr.",
+  },
+  fr: {
+    invoice_number: "Numéro de facture", issue_date: "Date d'émission", service_date: "Date de prestation",
+    due_date: "Date d'échéance", seller_name: "Vendeur", seller: "Vendeur", seller_nip: "N° TVA vendeur",
+    seller_address: "Adresse vendeur", buyer_name: "Client", buyer: "Client", buyer_nip: "N° TVA client",
+    buyer_address: "Adresse client", net_amount: "Montant HT", tax_amount: "Montant TVA", total_amount: "Montant TTC",
+    currency: "Devise", payment_method: "Mode de paiement", bank_account: "Compte bancaire", bank_bic: "BIC",
+    reference_numbers: "Numéros de référence", email: "E-mail", vat_id: "N° TVA",
+  },
+};
+
+let LANG = "pl";
+let FIELD_LABELS = FIELD_LABELS_I18N.pl;
+const FIELD_ORDER = Object.keys(FIELD_LABELS_I18N.pl);
+const t = (key) => (I18N[LANG] && I18N[LANG][key] !== undefined) ? I18N[LANG][key] : I18N.pl[key];
+
+function applyLang(lang) {
+  if (!I18N[lang]) lang = "pl";
+  LANG = lang;
+  FIELD_LABELS = FIELD_LABELS_I18N[lang];
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    if (I18N[lang][key] !== undefined) el.textContent = I18N[lang][key];
+  });
+  document.querySelectorAll(".flag-btn").forEach(btn =>
+    btn.classList.toggle("active", btn.dataset.lang === lang));
+  const sub = document.querySelector(".topbar .sub");
+  if (sub) sub.textContent = t("subtitle");
+  if (currentData) render(currentData);
+}
+
+function detectLang() {
+  const nav = (navigator.language || "pl").slice(0, 2).toLowerCase();
+  return I18N[nav] ? nav : "pl";
+}
+
+const drop = $("drop"), fileInput = $("file");
+const cameraInput = $("cameraInput"), galleryInput = $("galleryInput");
+let currentData = null;
+
+// przyciski źródeł otwierają odpowiednie inputy
+$("btnCamera").addEventListener("click", (e) => { e.stopPropagation(); cameraInput.click(); });
+$("btnGallery").addEventListener("click", (e) => { e.stopPropagation(); galleryInput.click(); });
+$("btnFile").addEventListener("click", (e) => { e.stopPropagation(); fileInput.click(); });
+cameraInput.addEventListener("change", () => { if (cameraInput.files.length) handleMany(cameraInput.files); });
+galleryInput.addEventListener("change", () => { if (galleryInput.files.length) handleMany(galleryInput.files); });
+
+// kolekcja zebranych faktur (podejście A - w pamięci przeglądarki)
+let batchInvoices = [];
+
+// przechowujemy URL podglądu, by go zwolnić przy resecie
+let previewUrl = null;
+
+// przycisk "wypróbuj na przykładzie"
+$("btnSample").addEventListener("click", async () => {
+  $("err").classList.remove("on"); $("result").classList.remove("on");
+  $("loading").classList.add("on"); $("loadingText").textContent = t("loading_sample");
+  try {
+    const res = await fetch("/api/sample");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Błąd");
+    currentData = data;
+    showPreview("samples/faktura_cargo.pdf", "application/pdf", true);
+    render(data);
+  } catch (e) {
+    showError(t("err_sample"), e.message);
+  } finally {
+    $("loading").classList.remove("on");
+  }
+});
+
+["dragover","dragenter"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("drag"); }));
+["dragleave","drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("drag"); }));
+drop.addEventListener("drop", ev => { if (ev.dataTransfer.files.length) handleMany(ev.dataTransfer.files); });
+fileInput.addEventListener("change", () => { if (fileInput.files.length) handleMany(fileInput.files); });
+
+$("resetBtn").addEventListener("click", () => {
+  $("result").classList.remove("on"); $("err").classList.remove("on");
+  fileInput.value = ""; currentData = null;
+  if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+  $("previewHolder").innerHTML = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
+
+$("jsonBtn").addEventListener("click", () => {
+  syncFromInputs();
+  const blob = new Blob([JSON.stringify(currentData, null, 2)], { type: "application/json" });
+  downloadBlob(blob, (currentData.source_file || "faktura").replace(/\.pdf$/i, "") + ".json");
+});
+
+$("exportBtn").addEventListener("click", async () => {
+  syncFromInputs();
+  const btn = $("exportBtn");
+  btn.textContent = t("exporting"); btn.disabled = true;
+  try {
+    const res = await fetch("/api/export/xlsx", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...currentData, lang: LANG }),
+    });
+    if (!res.ok) throw new Error("Eksport nie powiódł się");
+    const blob = await res.blob();
+    downloadBlob(blob, (currentData.source_file || "faktura").replace(/\.pdf$/i, "") + ".xlsx");
+  } catch (e) {
+    showError(t("err_export"), e.message);
+  } finally {
+    btn.textContent = t("btn_export"); btn.disabled = false;
+  }
+});
+
+$("powerbiBtn").addEventListener("click", async () => {
+  syncFromInputs();
+  const btn = $("powerbiBtn");
+  btn.textContent = t("exporting"); btn.disabled = true;
+  try {
+    const res = await fetch("/api/export/powerbi", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(currentData),
+    });
+    if (!res.ok) throw new Error("Eksport nie powiódł się");
+    const blob = await res.blob();
+    downloadBlob(blob, (currentData.source_file || "faktura").replace(/\.pdf$/i, "") + "_powerbi.csv");
+  } catch (e) {
+    showError(t("err_export"), e.message);
+  } finally {
+    btn.textContent = t("btn_powerbi"); btn.disabled = false;
+  }
+});
+
+// --- eksporty zbiorcze (wiele faktur) ---
+$("batchExcelBtn").addEventListener("click", async () => {
+  const btn = $("batchExcelBtn");
+  btn.textContent = t("exporting"); btn.disabled = true;
+  try {
+    const res = await fetch("/api/export/batch/xlsx", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invoices: batchInvoices, lang: LANG }),
+    });
+    if (!res.ok) throw new Error("Eksport nie powiódł się");
+    downloadBlob(await res.blob(), "zestawienie_faktur.xlsx");
+  } catch (e) {
+    showError(t("err_export"), e.message);
+  } finally {
+    btn.textContent = t("batch_excel"); btn.disabled = false;
+  }
+});
+
+$("batchPowerbiBtn").addEventListener("click", async () => {
+  const btn = $("batchPowerbiBtn");
+  btn.textContent = t("exporting"); btn.disabled = true;
+  try {
+    const res = await fetch("/api/export/batch/powerbi", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invoices: batchInvoices }),
+    });
+    if (!res.ok) throw new Error("Eksport nie powiódł się");
+    downloadBlob(await res.blob(), "zestawienie_faktur_powerbi.csv");
+  } catch (e) {
+    showError(t("err_export"), e.message);
+  } finally {
+    btn.textContent = t("batch_powerbi"); btn.disabled = false;
+  }
+});
+
+$("batchClearBtn").addEventListener("click", () => {
+  batchInvoices = [];
+  renderBatch();
+});
+
+// przetwarza jeden plik i zwraca dane
+async function extractOne(file) {
+  const fd = new FormData(); fd.append("file", file);
+  const res = await fetch("/api/extract", { method: "POST", body: fd });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Serwer zwrócił błąd");
+  data.source_file = data.source_file || file.name;
+  return data;
+}
+
+// obsługa wielu plików - przetwarza sekwencyjnie z paskiem postępu
+async function handleMany(fileList) {
+  const files = Array.from(fileList);
+  $("err").classList.remove("on"); $("result").classList.remove("on");
+  drop.classList.add("busy"); $("loading").classList.add("on");
+
+  let lastData = null, lastFile = null, failed = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const isImage = file.type.startsWith("image/");
+    $("loadingText").textContent = files.length > 1
+      ? `${t("processing")} ${i + 1}/${files.length} — ${file.name}`
+      : (isImage ? t("loading_img") : t("loading_doc"));
+    try {
+      const data = await extractOne(file);
+      batchInvoices.push(data);
+      lastData = data; lastFile = file;
+    } catch (e) {
+      failed++;
+      console.error("Błąd pliku", file.name, e.message);
+    }
+  }
+
+  $("loading").classList.remove("on"); drop.classList.remove("busy");
+
+  // pokaż ostatnią przetworzoną fakturę w szczegółach
+  if (lastData) {
+    currentData = lastData;
+    if (lastFile) showPreview(URL.createObjectURL(lastFile), lastFile.type, false);
+    render(lastData);
+  }
+  renderBatch();
+  if (failed) showError(t("err_read"), `${failed}/${files.length}`);
+}
+
+// render panelu zbiorczego
+function renderBatch() {
+  const panel = $("batchPanel");
+  if (batchInvoices.length < 1) { panel.style.display = "none"; return; }
+  panel.style.display = "";
+  $("batchCount").textContent = batchInvoices.length;
+
+  // sumy
+  let net = 0, vat = 0, gross = 0;
+  batchInvoices.forEach(inv => {
+    const f = inv.fields || {};
+    net += num(f.net_amount); vat += num(f.tax_amount); gross += num(f.total_amount);
+  });
+  const cur = (batchInvoices[0].fields || {}).currency || "PLN";
+  $("batchTotals").innerHTML =
+    `<div class="bt">${t("sum_net")}<b>${fmtMoney(net)} ${cur}</b></div>` +
+    `<div class="bt">${t("sum_vat")}<b>${fmtMoney(vat)} ${cur}</b></div>` +
+    `<div class="bt">${t("sum_gross")}<b>${fmtMoney(gross)} ${cur}</b></div>`;
+
+  // lista faktur
+  const list = $("batchList");
+  list.innerHTML = "";
+  batchInvoices.forEach((inv, idx) => {
+    const f = inv.fields || {};
+    const nr = f.invoice_number || inv.source_file || "—";
+    const seller = f.seller_name || f.seller || "—";
+    const g = num(f.total_amount);
+    const row = document.createElement("div");
+    row.className = "batch-row";
+    row.innerHTML =
+      `<span class="bnum">${escapeAttr(String(nr))}</span>` +
+      `<span class="bseller">${escapeAttr(String(seller))}</span>` +
+      `<span class="bgross">${fmtMoney(g)} ${(f.currency || cur)}</span>` +
+      `<button class="bdel" data-idx="${idx}" title="usuń">✕</button>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll(".bdel").forEach(btn =>
+    btn.addEventListener("click", () => {
+      batchInvoices.splice(parseInt(btn.dataset.idx), 1);
+      renderBatch();
+    }));
+}
+
+function num(v) {
+  if (v === null || v === undefined || v === "") return 0;
+  const n = parseFloat(String(v).replace(/\s/g, "").replace(",", "."));
+  return isNaN(n) ? 0 : n;
+}
+function fmtMoney(n) {
+  return n.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function handle(file) {
+  return handleMany([file]);
+}
+
+function confClass(key, val) {
+  if (val === null || val === undefined || val === "") return "low";
+  const check = ["total_amount", "net_amount", "tax_amount", "seller_nip", "buyer_nip"];
+  if (check.includes(key)) return "mid";
+  return "high";
+}
+
+function showPreview(url, mime, isServerPath) {
+  previewUrl = isServerPath ? null : url;
+  const holder = $("previewHolder");
+  const isPdf = mime === "application/pdf" || url.toLowerCase().includes(".pdf");
+  if (isPdf) {
+    // iframe jest szerzej wspierany niż embed; link jako awaryjne wyjście
+    holder.innerHTML =
+      `<iframe src="${url}" title="podgląd faktury" style="width:100%;min-height:480px;border:0;border-radius:6px;background:#fff"></iframe>` +
+      `<a href="${url}" target="_blank" rel="noopener" class="preview-open">${t("open_pdf")}</a>`;
+  } else {
+    holder.innerHTML = `<img src="${url}" alt="podgląd faktury" />`;
+  }
+}
+
+function render(d) {
+  $("fileName").textContent = d.source_file || "dokument.pdf";
+
+  const engine = (d.fields && d.fields._engine) || "rules";
+  const badge = $("engineBadge");
+  badge.className = "engine-badge " + engine;
+  $("engineText").removeAttribute("data-i18n");
+  $("engineText").textContent = engine === "llm" ? t("engine_llm") : t("engine_rules");
+
+  const typeLabel = t("tag_type")[d.document_type] || d.document_type;
+  const methodLabel = { text: "tekst", ocr: "OCR", hybrid: "tekst+OCR", none: "—" }[d.extraction_method] || d.extraction_method;
+  $("metaRow").innerHTML =
+    `<span class="tag type">${typeLabel}</span>` +
+    `<span class="tag">${t("tag_read")}: <b>${methodLabel}</b></span>` +
+    `<span class="tag">${t("tag_pages")}: <b>${d.page_count}</b></span>` +
+    `<span class="tag">${t("tag_conf")}: <b>${Math.round((d.confidence||0)*100)}%</b></span>`;
+
+  const fields = d.fields || {};
+  const fieldWarnings = d.field_warnings || {};
+  const box = $("fields"); box.innerHTML = "";
+  const seen = new Set();
+  const renderField = (key) => {
+    const val = fields[key];
+    if (val === undefined || key.startsWith("_")) return;
+    seen.add(key);
+    const cls = confClass(key, val);
+    const warn = fieldWarnings[key];
+    const el = document.createElement("div");
+    el.className = "field" + (warn ? " invalid" : "");
+    el.innerHTML =
+      `<div class="field-label"><span class="conf-dot ${warn ? "low" : cls}"></span>${FIELD_LABELS[key] || key}</div>` +
+      `<input class="field-input" data-key="${key}" value="${escapeAttr(fmt(val))}" placeholder="—" />` +
+      (warn ? `<div class="field-warn">⚠ ${escapeAttr(valMsg(warn))}</div>` : "");
+    box.appendChild(el);
+  };
+  FIELD_ORDER.forEach(renderField);
+  Object.keys(fields).forEach(k => { if (!seen.has(k) && !k.startsWith("_")) renderField(k); });
+
+  box.querySelectorAll(".field-input").forEach(inp => {
+    inp.addEventListener("input", () => inp.classList.add("edited"));
+  });
+
+  // baner walidacji zbiorczy
+  const warnKeys = Object.keys(fieldWarnings);
+  const banner = $("validationBanner");
+  if (warnKeys.length) {
+    banner.innerHTML = `<b>⚠ ${t("val_title_1")} ${warnKeys.length} ${warnKeys.length === 1 ? t("val_title_problem") : t("val_title_problems")}:</b><ul>` +
+      warnKeys.map(k => `<li>${FIELD_LABELS[k] || k}: ${escapeAttr(valMsg(fieldWarnings[k]))}</li>`).join("") + `</ul>`;
+    banner.style.display = "";
+  } else {
+    banner.style.display = "none";
+  }
+
+  const items = d.line_items || [];
+  const body = $("itemsBody"); body.innerHTML = "";
+  if (items.length) {
+    items.forEach((it, i) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        `<td><input data-i="${i}" data-f="description" value="${escapeAttr(it.description||"")}" /></td>` +
+        `<td class="r"><input data-i="${i}" data-f="quantity" value="${escapeAttr(it.quantity||"")}" /></td>` +
+        `<td class="r"><input data-i="${i}" data-f="unit_price" value="${escapeAttr(it.unit_price||"")}" /></td>` +
+        `<td class="r"><input data-i="${i}" data-f="total" value="${escapeAttr(it.total||"")}" /></td>`;
+      body.appendChild(tr);
+    });
+    $("itemsCard").style.display = "";
+    $("itemsCount").textContent = items.length + " " + (items.length === 1 ? t("items_one") : t("items_many"));
+  } else {
+    $("itemsCard").style.display = "none";
+  }
+
+  $("rawText").textContent = d.raw_text || "(brak tekstu)";
+  $("result").classList.add("on");
+  $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function syncFromInputs() {
+  if (!currentData) return;
+  document.querySelectorAll("#fields .field-input").forEach(inp => {
+    const v = inp.value.trim();
+    currentData.fields[inp.dataset.key] = v === "" ? null : v;
+  });
+  document.querySelectorAll("#itemsBody input").forEach(inp => {
+    const i = +inp.dataset.i, f = inp.dataset.f;
+    if (currentData.line_items[i]) currentData.line_items[i][f] = inp.value.trim() || null;
+  });
+}
+
+function showError(title, msg) {
+  const e = $("err");
+  e.innerHTML = `<b>${title}</b>${msg || ""}`;
+  e.classList.add("on");
+}
+function downloadBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function fmt(v) { return Array.isArray(v) ? v.join(", ") : (v ?? ""); }
+function valMsg(code) { const v = (I18N[LANG] && I18N[LANG].val) || I18N.pl.val; return (v && v[code]) || code; }
+function escapeAttr(s) { return String(s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+
+// ---- Inicjalizacja języka ----
+document.querySelectorAll(".flag-btn").forEach(btn =>
+  btn.addEventListener("click", () => applyLang(btn.dataset.lang)));
+applyLang(detectLang());   // wykryj z przeglądarki przy starcie
+</script>
+</body>
+</html>
