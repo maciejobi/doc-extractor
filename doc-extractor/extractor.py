@@ -481,7 +481,69 @@ def _map_llm_result(data: dict) -> tuple[dict, list[LineItem]]:
     # pola bez line_items (te idą osobno)
     fields = {k: v for k, v in data.items()
               if k != "line_items" and v not in (None, "", [])}
+    _split_merged_parties(fields)
     return fields, items
+
+
+# formy prawne firm - marker końca nazwy (PL/EN/DE/FR)
+_LEGAL_FORMS = [
+    "spółka akcyjna", "spółka z ograniczoną odpowiedzialnością",
+    "sp. z o.o.", "sp. z o. o.", "spółka z o.o.", "sp.j.", "sp. j.",
+    "spółka jawna", "spółka komandytowa", "sp. k.", "s.k.a.", "s.a.",
+    "s.c.", "p.s.a.",
+    "gmbh", "ag", "kg", "ohg", "ug", "mbh",
+    "ltd", "llc", "inc", "corp", "plc", "co.",
+    "sarl", "sas", "sa", "eurl",
+]
+
+
+def _split_merged_parties(fields: dict) -> None:
+    """
+    Zabezpieczenie: jeśli LLM skleił nazwę sprzedawcy z nabywcą w jedno pole
+    (np. "MACIEJ OBRZUT C&F SPÓŁKA AKCYJNA"), próbujemy je rozdzielić.
+
+    Podejście: szukamy formy prawnej firmy (Sp. z o.o., S.A., Spółka Akcyjna...).
+    Jeśli w nazwie sprzedawcy jest forma prawna i PO niej jest jeszcze tekst,
+    albo PRZED nią jest osobna nazwa (druga firma) - rozdzielamy. Rozdzielenie
+    robimy tylko gdy pole nabywcy jest puste (żeby nie psuć poprawnych danych).
+    """
+    seller = (fields.get("seller_name") or fields.get("seller") or "").strip()
+    buyer = (fields.get("buyer_name") or fields.get("buyer") or "").strip()
+    if not seller or buyer:
+        return  # rozdzielamy tylko gdy nabywca pusty
+
+    low = seller.lower()
+    for form in sorted(_LEGAL_FORMS, key=len, reverse=True):
+        idx = low.find(form)
+        if idx == -1:
+            continue
+        end = idx + len(form)
+        tail = seller[end:].strip(" .,-")
+        head = seller[:idx].strip(" .,-")
+
+        if tail and len(tail) > 2:
+            # forma w środku: pierwsza firma kończy się formą, druga = tail
+            fields["seller_name"] = seller[:end].strip(" .,-")
+            fields["buyer_name"] = tail
+            fields.pop("seller", None); fields.pop("buyer", None)
+            return
+        elif head:
+            # forma na końcu: druga firma to (coś + forma). Szukamy granicy -
+            # zwykle druga firma zaczyna się od "krótkiego" członu przed formą.
+            # Heurystyka: jeśli head zawiera >= 3 słowa, ostatnie 1-2 słowa +
+            # forma to druga firma, reszta to pierwsza (sprzedawca).
+            words = head.split()
+            if len(words) >= 3:
+                # pierwsza firma: pierwsze słowa (imię+nazwisko = 2 słowa)
+                # druga firma: reszta słów + forma prawna (z oryginału)
+                first = " ".join(words[:2])
+                form_original = seller[idx:end]  # forma w oryginalnej pisowni
+                rest_after_form = seller[end:]     # ewentualny ogon
+                second = " ".join(words[2:]) + " " + form_original + rest_after_form
+                fields["seller_name"] = first.strip()
+                fields["buyer_name"] = second.strip()
+                fields.pop("seller", None); fields.pop("buyer", None)
+            return
 
 
 def _s(v):
