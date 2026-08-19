@@ -195,7 +195,10 @@
   .batch-row {
     display: flex; align-items: center; gap: 12px; padding: 10px 12px;
     border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
+    cursor: pointer; transition: background .12s, border-color .12s;
   }
+  .batch-row:hover { background: var(--blue-50); border-color: var(--blue-200); }
+  .batch-row.active { background: var(--blue-50); border-color: var(--blue-500); border-left-width: 3px; }
   .batch-row .bnum { font-weight: 600; color: var(--navy-800); min-width: 90px; }
   .batch-row .bseller { flex: 1; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .batch-row .bgross { font-weight: 600; color: var(--ink); }
@@ -804,6 +807,7 @@ $("batchPowerbiBtn").addEventListener("click", async () => {
 });
 
 $("batchClearBtn").addEventListener("click", () => {
+  batchInvoices.forEach(inv => { if (inv._previewUrl) URL.revokeObjectURL(inv._previewUrl); });
   batchInvoices = [];
   renderBatch();
 });
@@ -849,6 +853,9 @@ async function handleMany(fileList) {
       const file = files[idx];
       try {
         const data = await extractOne(file);
+        // zachowaj podgląd oryginału dla tej faktury (do przełączania)
+        data._previewUrl = URL.createObjectURL(file);
+        data._previewMime = file.type;
         batchInvoices.push(data);
         lastData = data; lastFile = file;
       } catch (e) {
@@ -908,19 +915,43 @@ function renderBatch() {
     const seller = f.seller_name || f.seller || "—";
     const g = num(f.total_amount);
     const row = document.createElement("div");
-    row.className = "batch-row";
+    row.className = "batch-row" + (inv === currentData ? " active" : "");
     row.innerHTML =
       `<span class="bnum">${escapeAttr(String(nr))}</span>` +
       `<span class="bseller">${escapeAttr(String(seller))}</span>` +
       `<span class="bgross">${fmtMoney(g)} ${(f.currency || cur)}</span>` +
       `<button class="bdel" data-idx="${idx}" title="usuń">✕</button>`;
+    // kliknięcie wiersza (poza przyciskiem usuwania) otwiera szczegóły
+    row.addEventListener("click", (e) => {
+      if (e.target.classList.contains("bdel")) return;
+      openInvoice(idx);
+    });
     list.appendChild(row);
   });
   list.querySelectorAll(".bdel").forEach(btn =>
-    btn.addEventListener("click", () => {
-      batchInvoices.splice(parseInt(btn.dataset.idx), 1);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const i = parseInt(btn.dataset.idx);
+      const removed = batchInvoices[i];
+      if (removed && removed._previewUrl) URL.revokeObjectURL(removed._previewUrl);
+      batchInvoices.splice(i, 1);
       renderBatch();
     }));
+}
+
+// otwiera szczegóły wybranej faktury z listy zbiorczej
+function openInvoice(idx) {
+  const inv = batchInvoices[idx];
+  if (!inv) return;
+  currentData = inv;
+  if (inv._previewUrl) {
+    showPreview(inv._previewUrl, inv._previewMime || "application/pdf", true);
+  } else {
+    $("previewHolder").innerHTML = "";
+  }
+  render(inv);
+  renderBatch();  // odśwież podświetlenie aktywnego wiersza
+  $("result").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function num(v) {

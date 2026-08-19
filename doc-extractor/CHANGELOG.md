@@ -76,3 +76,8 @@ listy rozwijanej wyboru języka na cztery flagi (PL / GB / DE / FR).
 - Backend: zwiększona liczba wątków Gunicorn (2 -> 4), dostrojona pod
   limit pamięci darmowego planu (ekstrakcja LLM to głównie czekanie na sieć).
 
+### 15. Nawigacja między wgranymi fakturami
+- Kliknięcie faktury na liście zbiorczej otwiera jej pełne szczegóły
+  (dane + podgląd oryginału) w sekcji poniżej.
+- Aktywna faktura jest podświetlona na liście.
+- Podgląd oryginału zachowywany dla każdej faktury (nie tylko ostatniej).
